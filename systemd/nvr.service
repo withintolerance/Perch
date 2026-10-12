@@ -1,0 +1,16 @@
+[Unit]
+Description=Camera recorder
+After=network-online.target go2rtc.service
+Wants=go2rtc.service
+
+[Service]
+WorkingDirectory=/opt/nvr
+Environment=NVR_CONFIG=/opt/nvr/cameras.yaml
+Environment=TZ=UTC
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/nvr/.venv/bin/python -m app
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

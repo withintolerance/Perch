@@ -1,0 +1,21 @@
+# Copy to cameras.yaml. The first boot imports this list into the database.
+# After that, add and edit cameras in the browser.
+# Set advertise_host to the address other devices use to open this recorder,
+# or live view from another computer will not connect.
+timezone: UTC
+data_dir: /data
+retain_days: 7
+min_free_gb: 40
+segment_seconds: 15
+motion_fps: 2
+motion_noise: 2.0
+motion_saturate: 28.0
+advertise_host: 127.0.0.1
+webrtc_port: 8555
+http_port: 8090
+go2rtc_api: http://127.0.0.1:1984
+go2rtc_rtsp: rtsp://127.0.0.1:8554
+cameras: []
+#  - id: front_door
+#    name: Front door
+#    url: rtsp://user:password@10.0.0.20:554/stream1

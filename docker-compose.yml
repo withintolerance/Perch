@@ -1,0 +1,32 @@
+services:
+  go2rtc:
+    image: alexxit/go2rtc:1.9.14
+    container_name: nvr-go2rtc
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - ./go2rtc.yaml:/config/go2rtc.yaml:ro
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  nvr:
+    build: .
+    container_name: nvr
+    network_mode: host
+    restart: unless-stopped
+    init: true
+    depends_on:
+      - go2rtc
+    environment:
+      NVR_CONFIG: /config/cameras.yaml
+      TZ: UTC
+    volumes:
+      - ./data:/data
+      - ./cameras.yaml:/config/cameras.yaml:ro
+      - ./go2rtc.yaml:/config/go2rtc.yaml
+    logging:
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+cameras.yaml
+go2rtc.yaml
+data/
+*.mp4
+*.ts
+*.bad
