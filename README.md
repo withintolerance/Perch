@@ -1,38 +1,95 @@
 # Perch
 
-Perch is a small recorder for RTSP cameras. It shows a live grid, keeps the original stream, and draws motion on a timeline. Sign-in is off until you turn it on. An owner can then add other people with access to only some cameras.
+We made Perch because Frigate kept letting us down. We did not need object detection, and we did not want to fight the software just to see our cameras. We needed something simple: record our RTSP cameras, watch them live, and play back what happened.
 
-## Run
+That is all Perch does. It keeps the camera's own picture, shows every camera on one page, and marks the timeline where something moved.
 
-You need Docker, or Python 3.10+ with ffmpeg and a separate [go2rtc](https://github.com/AlexxIT/go2rtc) process.
+## Install it
+
+You need a Linux computer that will stay on, like a small server or an old PC. One command downloads Perch, installs Docker if you don't have it, and starts the recorder:
 
 ```sh
-cp cameras.example.yaml cameras.yaml
-cp go2rtc.yaml.example go2rtc.yaml
-# set advertise_host in cameras.yaml to the address browsers will use
-docker compose up -d --build
+curl -fsSL https://raw.githubusercontent.com/withintolerance/Perch/main/install.sh | sh
 ```
 
-Open `http://<host>:8090`. Cameras are visible without an account. Settings → Sign-in turns on a login page. The first time you turn it on, you create the owner account. Owners can add more people under Settings → Users and choose which cameras they can see, and whether they get live view, playback, or settings. Until sign-in is on, anyone who can open the page can also change settings.
+The first run can take a few minutes. When it finishes, it prints an address like `http://192.168.1.50:8090`. Open that address in a browser on the same network.
 
-`cameras.yaml` is read once, the first time the database is empty. After that, cameras, users, the recording folder, the schedule, and Home Assistant live in the database and the Settings page.
+The page is empty at first. That is normal. You add cameras next.
 
-Set the recording folder in Settings. New files go there. Files already saved stay put and remain playable.
+Perch is stored in a folder called `perch` in your home folder. Recordings go in `perch/data` until you pick another folder in Settings.
 
-## Recording
+## Add a camera
 
-- **24/7, keep everything** records continuously and does not care about motion.
-- **Keep everything, only during these hours** records on the days and times you pick. A window that passes midnight, such as 22:00–06:00, is fine.
-- **Keep only pieces with motion** still records continuously, then deletes a 15-second piece when nothing in it crosses the motion percent. The start of a movement stays in that piece. This can be combined with the hours limit.
+1. Click **Settings**.
+2. Scroll to **Add a camera**.
+3. Type a name you will recognize, such as `Front door`.
+4. Paste the camera's RTSP address. It starts with `rtsp://` and usually includes a username and password, like `rtsp://user:password@192.168.1.20:554/stream1`.
+5. Click **Add camera**, then go back to the camera list.
 
-The disk floor deletes the oldest recordings, ours only, when free space gets low.
+The live picture should show up within a few seconds. Your camera's phone app is where you find that RTSP address. Look for a switch named RTSP and turn it on.
+
+## Watch a recording
+
+Click a camera. Under the picture is a timeline of that day.
+
+- Bright marks are movement. A taller, brighter mark means more movement.
+- Click a moment to play it.
+- Scroll on the timeline to zoom in. Drag to move along the day.
+
+Playback is the original recording, not a tiny preview.
+
+## Turn on a password
+
+Until you turn on sign-in, anyone who can open the page can watch the cameras and change settings, including the camera passwords.
+
+When you want a login:
+
+1. Open **Settings**.
+2. Check **Require a sign-in**.
+3. Create the owner username and password. The password needs at least 10 characters.
+4. Click **Save sign-in**.
+
+That owner can later add other people, and can choose which cameras each person can see.
+
+## Recording choices
+
+Open **Settings** and pick one:
+
+- **24/7, keep everything.** Records all the time and keeps it.
+- **Keep everything, only during these hours.** Records on the days and times you pick. A range that passes midnight, such as 22:00 to 06:00, is fine.
+- **24/7, keep only pieces with motion.** Records all the time, then deletes a 15-second piece if nothing in it moved enough.
+- **Only during these hours, and only pieces with motion.** Both limits at once.
+
+Perch also deletes the oldest recordings, and only its own, when the disk gets too full.
 
 ## Home Assistant
 
-Turn on MQTT in Settings and use the same broker Home Assistant already has. Each camera is a motion entity. Each zone you draw is another one. Discovery is published to `homeassistant/binary_sensor/...`.
+Skip this if you do not use Home Assistant.
 
-## Security
+Turn on **Publish motion** in Settings and point it at the same MQTT broker Home Assistant already uses. Each camera becomes a motion sensor. If you draw a zone on a camera, that zone becomes its own sensor too.
 
-With sign-in on, the site, the recordings, and the live-view handshake require the session cookie. The WebRTC media port (`8555` by default) has to be reachable by the browser, so keep this host on a network you trust, or put it behind HTTPS on a private address. Camera passwords stay on the server and are not shown on the main screen.
+## If it does not work
 
-Recordings are plain files under the data directory. Protect that disk the same way you protect the account.
+**The browser cannot open the page.** Use the address the installer printed, including `:8090`. The server and the browser need to be on the same network.
+
+**A camera stays on "Connecting" or "not ready."** The RTSP address is wrong, the camera is off, or the username and password were rejected. Fix the address under Settings. The other cameras are not affected.
+
+**Live video works on the server, but not from your phone.** Perch has to tell your phone where to connect. The installer guesses the server's address. If the server has more than one network, edit `advertise_host` in `cameras.yaml` inside the `perch` folder, then run:
+
+```sh
+cd ~/perch
+docker compose restart
+```
+
+**You want to stop it.**
+
+```sh
+cd ~/perch
+docker compose down
+```
+
+Your recordings stay in the `data` folder.
+
+## Privacy
+
+Leave sign-in off only on a home network you trust. With sign-in on, watching and changing settings require the login. Camera passwords stay on the server. They are not shown on the main screen.
