@@ -38,9 +38,13 @@ def write_go2rtc_file(settings: Settings, cameras: list[Camera]) -> None:
         log.warning("could not restrict permissions on %s", path)
 
 
+def stream_query(camera_id: str, url: str) -> str:
+    # go2rtc names the stream from "name". "dst" is a different call and is ignored here.
+    return urllib.parse.urlencode({"name": camera_id, "src": live_source(url)})
+
+
 def put_stream(api: str, camera_id: str, url: str) -> None:
-    query = urllib.parse.urlencode({"dst": camera_id, "src": live_source(url)})
-    request = urllib.request.Request(f"{api}/api/streams?{query}", method="PUT")
+    request = urllib.request.Request(f"{api}/api/streams?{stream_query(camera_id, url)}", method="PUT")
     with urllib.request.urlopen(request, timeout=8) as response:
         response.read()
 

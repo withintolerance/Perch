@@ -45,7 +45,7 @@ async function boot() {
 
 function showAccountChrome() {
   document.querySelector("#settings-button").hidden = !sessionState.canSettings;
-  document.querySelector("#logout-button").hidden = false;
+  document.querySelector("#logout-button").hidden = !sessionState.username;
   summary.textContent = sessionState.username ? `Signed in as ${sessionState.username}` : "Connecting…";
 }
 
@@ -113,7 +113,8 @@ function renderGrid() {
     tile.dataset.id = camera.id;
     tile.innerHTML = `
       <div class="frame">
-        <video autoplay playsinline muted></video>
+        <img class="poster" alt="">
+        <video autoplay playsinline muted class="pending"></video>
         <p class="overlay">Connecting…</p>
       </div>
       <div class="meta"><h2></h2><span class="dot"></span></div>`;
@@ -123,7 +124,20 @@ function renderGrid() {
     });
     grid.appendChild(tile);
     const video = tile.querySelector("video");
+    const poster = tile.querySelector(".poster");
     const overlay = tile.querySelector(".overlay");
+    poster.addEventListener("error", () => {
+      poster.hidden = true;
+    });
+    const showLive = () => {
+      if (!video.srcObject || video.readyState < 2) return;
+      video.classList.remove("pending");
+      poster.hidden = true;
+      if (overlay.textContent === "Connecting…") overlay.textContent = "";
+    };
+    video.addEventListener("loadeddata", showLive);
+    video.addEventListener("playing", showLive);
+    poster.src = `/api/cameras/${encodeURIComponent(camera.id)}/snapshot.jpg?t=${Date.now()}`;
     keepLive(video, camera.id, token, overlay);
   }
   app.appendChild(grid);
@@ -656,7 +670,6 @@ function keepLive(video, cameraId, token, overlay) {
         continue;
       }
       try {
-        if (overlay && token === generation) overlay.textContent = "";
         const pc = await connectLive(video, cameraId, token);
         await ended(pc, token);
         try { pc.close(); } catch (_error) { /* already closed */ }
@@ -687,6 +700,8 @@ async function connectLive(video, cameraId, token) {
     if (token !== generation) return;
     video.srcObject = event.streams[0];
     tighten();
+    const play = video.play();
+    if (play && typeof play.catch === "function") play.catch(() => {});
   };
   try {
     const offer = await pc.createOffer();
@@ -723,7 +738,7 @@ async function connectLive(video, cameraId, token) {
 function waitIce(pc) {
   if (pc.iceGatheringState === "complete") return Promise.resolve();
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, 1200);
+    const timer = setTimeout(resolve, 1500);
     pc.addEventListener("icegatheringstatechange", () => {
       if (pc.iceGatheringState === "complete") {
         clearTimeout(timer);
@@ -785,7 +800,7 @@ async function sendJSON(url, method, body) {
     headers: {"Content-Type": "application/json"},
     body: body == null ? undefined : JSON.stringify(body),
   });
-  if (response.status === 401) {
+  if (response.status === 401 && url !== "/api/login") {
     sessionState = {authenticated: false, needsSetup: false};
     renderLogin();
     throw new Error("Sign in required.");

@@ -1,5 +1,5 @@
 [Unit]
-Description=Camera recorder
+Description=Perch camera recorder
 After=network-online.target go2rtc.service
 Wants=go2rtc.service
 

@@ -239,6 +239,17 @@ class Store:
                 cameras.append(camera_id)
         return can_live, can_playback, can_settings, cameras
 
+    def auth_required(self) -> bool:
+        raw = self.db.get_setting("auth_required")
+        if raw == "1":
+            return True
+        if raw == "0":
+            return False
+        return self.db.user_count() > 0
+
+    def set_auth_required(self, enabled: bool) -> None:
+        self.db.set_setting("auth_required", "1" if enabled else "0")
+
     def timezone(self) -> str:
         return self.db.get_setting("timezone") or self.settings.timezone
 

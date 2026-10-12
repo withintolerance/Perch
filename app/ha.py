@@ -117,7 +117,7 @@ class HomeAssistant:
         if not settings.get("enabled"):
             return
         prefix = settings["prefix"]
-        device = {"identifiers": [prefix], "name": "Cameras", "manufacturer": "House NVR"}
+        device = {"identifiers": [prefix], "name": "Perch", "manufacturer": "Perch"}
         for camera in self.store.cameras():
             self._discovery(settings, camera.id, "", f"{camera.name} motion", device)
             for zone in self.store.zones(camera.id):

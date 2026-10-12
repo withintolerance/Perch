@@ -70,6 +70,24 @@ class AccountTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 store.delete_account("someone-else", "owner")
 
+    def test_sign_in_stays_off_until_an_account_exists_or_it_is_turned_on(self):
+        from app.db import Database
+        from app.store import Store
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "cameras.yaml"
+            config.write_text("timezone: UTC\ndata_dir: /data\ncameras: []\n")
+            settings = load_settings(config)
+            store = Store(Database(root / "nvr.db"), settings)
+            self.assertFalse(store.auth_required())
+            store.db.create_user("owner", "hash", 1, role="owner")
+            self.assertTrue(store.auth_required())
+            store.set_auth_required(False)
+            self.assertFalse(store.auth_required())
+            store.set_auth_required(True)
+            self.assertTrue(store.auth_required())
+
     def test_password_roundtrip(self):
         stored = hash_password("correct horse")
         self.assertTrue(verify_password("correct horse", stored))
@@ -184,6 +202,11 @@ cameras:
                 live_source("ffmpeg:rtsp://camera/stream#video=copy#raw=-rtsp_transport tcp"),
                 "rtsp://camera/stream",
             )
+            from app.relay import stream_query
+
+            query = stream_query("front_door", settings.cameras[0].url)
+            self.assertIn("name=front_door", query)
+            self.assertNotIn("dst=", query)
             self.assertNotIn("url", public_camera(settings.cameras[0]))
             self.assertNotIn("rtsp", str(public_camera(settings.cameras[0])))
 

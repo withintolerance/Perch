@@ -91,8 +91,9 @@ async function renderSettings() {
   }
   const root = document.createElement("div");
   root.className = "settings";
-  const cards = [recordingCard(data), mqttCard(data), accountCard(), camerasCard(data)];
-  if (data.users) cards.splice(2, 0, usersCard(data));
+  const cards = [signInCard(data), recordingCard(data), mqttCard(data), camerasCard(data)];
+  if (sessionState.username) cards.splice(3, 0, accountCard());
+  if (data.users) cards.splice(3, 0, usersCard(data));
   root.append(...cards);
   app.innerHTML = "";
   app.appendChild(root);
@@ -311,6 +312,52 @@ function userPayload(form, requirePassword = true) {
   if (username) payload.username = username.value.trim();
   if (requirePassword && !payload.password) payload.password = "";
   return payload;
+}
+
+function signInCard(data) {
+  const section = document.createElement("section");
+  section.className = "card";
+  section.innerHTML = `
+    <h2>Sign-in</h2>
+    <p class="help">Leave this off to watch cameras without an account. Anyone who can open this page can also change settings, including camera passwords, until you turn it on.</p>
+    <label class="choice"><input name="enabled" type="checkbox" ${data.authRequired ? "checked" : ""}> Require a sign-in</label>
+    <div data-create hidden>
+      <label class="field"><span>Owner username</span><input name="username" autocomplete="username"></label>
+      <label class="field"><span>Owner password</span><input name="password" type="password" autocomplete="new-password" minlength="10"></label>
+      <p class="help">At least 10 characters. This becomes the account you sign in with.</p>
+    </div>
+    <p class="error-text" data-error></p>
+    <button type="button">Save sign-in</button>`;
+  const enabled = section.querySelector('[name="enabled"]');
+  const create = section.querySelector("[data-create]");
+  const sync = () => {
+    create.hidden = !(enabled.checked && !data.userCount);
+  };
+  enabled.addEventListener("change", sync);
+  sync();
+  section.querySelector("button").addEventListener("click", async () => {
+    const error = section.querySelector("[data-error]");
+    const payload = {enabled: enabled.checked};
+    if (enabled.checked && !data.userCount) {
+      payload.username = section.querySelector('[name="username"]').value.trim();
+      payload.password = section.querySelector('[name="password"]').value;
+    }
+    try {
+      await sendJSON("/api/settings/auth", "PUT", payload);
+      sessionState = await getJSON("/api/session");
+      if (!sessionState.authenticated) {
+        status = null;
+        stopLive();
+        renderLogin();
+        return;
+      }
+      showAccountChrome();
+      renderSettings();
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  });
+  return section;
 }
 
 function accountCard() {

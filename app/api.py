@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sqlite3
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 
+from app.access import Principal
 from app.config import Settings, load_settings
 from app.db import Database
 from app.engine import Engine, post_webrtc
@@ -23,7 +25,8 @@ STATIC = Path(__file__).resolve().parent.parent / "static"
 MAX_RANGE_MS = 2 * 86_400_000
 COOKIE = "nvr_session"
 SESSION_SECONDS = 30 * 24 * 3600
-OPEN_PATHS = {"/", "/app.js", "/app.css", "/settings.js", "/api/session", "/api/login", "/api/setup"}
+OPEN_PATHS = {"/", "/app.js", "/app.css", "/settings.js", "/logo.png", "/favicon.png", "/api/session", "/api/login", "/api/setup"}
+OPEN_PRINCIPAL = Principal("", "owner", True, True, True, frozenset())
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -59,14 +62,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def require_login(request: Request, call_next):
         path = request.url.path
-        if path in OPEN_PATHS or request.method == "OPTIONS":
-            return await call_next(request)
-        if _user(request, db) is None:
-            return JSONResponse({"detail": "Sign in required."}, status_code=401)
         if request.method in {"POST", "PUT", "DELETE"}:
             origin = request.headers.get("origin")
-            if origin and not origin.startswith(f"{request.url.scheme}://{request.headers.get('host', '')}"):
+            host = request.headers.get("host", "")
+            if origin and not origin.startswith(f"{request.url.scheme}://{host}"):
                 return JSONResponse({"detail": "This request came from another site."}, status_code=403)
+        if path not in OPEN_PATHS and request.method != "OPTIONS" and store.auth_required():
+            if _user(request, db) is None:
+                return JSONResponse({"detail": "Sign in required."}, status_code=401)
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -89,13 +92,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def settings_script():
         return FileResponse(STATIC / "settings.js", media_type="text/javascript", headers={"Cache-Control": "no-cache"})
 
+    @app.get("/logo.png")
+    def logo():
+        return FileResponse(STATIC / "logo.png", media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+    @app.get("/favicon.png")
+    def favicon():
+        return FileResponse(STATIC / "favicon.png", media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
     @app.get("/api/session")
     def session(request: Request):
+        if not store.auth_required():
+            return {
+                "authenticated": True,
+                "authRequired": False,
+                "openAccess": True,
+                "needsSetup": False,
+                "username": None,
+                "owner": True,
+                "canLive": True,
+                "canPlayback": True,
+                "canSettings": True,
+            }
         principal = _principal(request, store)
         if principal is None:
-            return {"authenticated": False, "needsSetup": db.user_count() == 0, "username": None}
+            return {
+                "authenticated": False,
+                "authRequired": True,
+                "openAccess": False,
+                "needsSetup": db.user_count() == 0,
+                "username": None,
+            }
         return {
             "authenticated": True,
+            "authRequired": True,
+            "openAccess": False,
             "needsSetup": False,
             "username": principal.username,
             "owner": principal.is_owner,
@@ -106,6 +137,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/api/setup")
     async def setup(request: Request):
+        if not store.auth_required():
+            raise HTTPException(status_code=400, detail="Sign-in is off. Turn it on in Settings to create an account.")
         if db.user_count():
             raise HTTPException(status_code=409, detail="An owner account already exists.")
         body = await request.json()
@@ -177,6 +210,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         payload = {
             "timezone": store.timezone(),
             "recordingsDir": str(store.recordings_dir()),
+            "authRequired": store.auth_required(),
+            "userCount": db.user_count(),
             "recording": store.policy().as_dict(),
             "mqtt": store.mqtt_public(),
             "cameras": [
@@ -228,6 +263,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         return {"ok": True}
+
+    @app.put("/api/settings/auth")
+    async def save_auth(request: Request):
+        body = await request.json()
+        enabled = bool(body.get("enabled"))
+        if not enabled:
+            principal = _require_user(request, store)
+            if not principal.is_owner:
+                raise HTTPException(status_code=403, detail="Only an owner can turn sign-in off.")
+            store.set_auth_required(False)
+            return {"authRequired": False}
+        if db.user_count() == 0:
+            username = str(body.get("username") or "").strip()
+            password = str(body.get("password") or "")
+            if not valid_username(username):
+                raise HTTPException(status_code=400, detail="Use a username of letters, numbers, _, . or -.")
+            if len(password) < 10:
+                raise HTTPException(status_code=400, detail="Use a password of at least 10 characters.")
+            try:
+                db.create_user(username, hash_password(password), int(time.time()))
+            except sqlite3.IntegrityError as exc:
+                raise HTTPException(status_code=409, detail="An owner account already exists.") from exc
+            store.set_auth_required(True)
+            return _login_response(db, username)
+        principal = _require_user(request, store)
+        if store.auth_required() and not principal.is_owner:
+            raise HTTPException(status_code=403, detail="Only an owner can change sign-in.")
+        store.set_auth_required(True)
+        return {"authRequired": True}
 
     @app.put("/api/settings/recording")
     async def save_recording(request: Request):
@@ -316,9 +380,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/cameras/{camera_id}/snapshot.jpg")
     def camera_snapshot(camera_id: str, request: Request):
-        _require_settings(request, store)
-        if store.camera(camera_id) is None:
+        principal = _require_user(request, store)
+        if store.camera(camera_id) is None or not principal.can_camera(camera_id):
             raise HTTPException(status_code=404, detail="Unknown camera.")
+        if not principal.can_live and not principal.can_settings:
+            raise HTTPException(status_code=403, detail="Live view is turned off for this account.")
         try:
             data, kind = snapshot(settings.go2rtc_api, camera_id)
         except Exception as exc:
@@ -387,6 +453,8 @@ def _user(request: Request, db: Database) -> str | None:
 
 
 def _principal(request: Request, store: Store):
+    if not store.auth_required():
+        return OPEN_PRINCIPAL
     username = _user(request, store.db)
     if username is None:
         return None
