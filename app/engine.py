@@ -59,7 +59,6 @@ class Engine:
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         self._recordings().mkdir(parents=True, exist_ok=True)
         self._ensure_day_dirs()
-        self._remux_finished()
         self.apply_cameras(self.store.cameras())
         for target in (
             self._status_loop,
@@ -221,6 +220,7 @@ class Engine:
             proc.wait()
             reader.join(timeout=2)
             self._record_proc.pop(camera_id, None)
+            self._release_proc(proc)
             with self._lock:
                 self.active_path.pop(camera_id, None)
             if self._halted(camera_stop):
@@ -325,6 +325,7 @@ class Engine:
             except subprocess.TimeoutExpired:
                 log.warning("motion %s did not exit", camera_id)
             reader.join(timeout=2)
+            self._release_proc(proc)
             if self._halted(camera_stop):
                 return
             if time.time() - started > 60:
@@ -531,15 +532,37 @@ class Engine:
             self._procs.append(proc)
         return proc
 
+    def _release_proc(self, proc: subprocess.Popen) -> None:
+        _close_pipes(proc)
+        with self._lock:
+            try:
+                self._procs.remove(proc)
+            except ValueError:
+                pass
+
 
 def _stop_proc(proc: subprocess.Popen) -> None:
-    if proc.poll() is not None:
-        return
-    proc.terminate()
-    try:
-        proc.wait(timeout=3)
-    except subprocess.TimeoutExpired:
-        proc.kill()
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            try:
+                proc.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                log.warning("ffmpeg did not exit")
+    _close_pipes(proc)
+
+
+def _close_pipes(proc: subprocess.Popen) -> None:
+    for stream in (proc.stdout, proc.stderr):
+        if stream is None:
+            continue
+        try:
+            stream.close()
+        except Exception:
+            pass
 
 
 def _remux(ts_path: Path, dest: Path) -> tuple[bool, str]:
@@ -564,7 +587,11 @@ def _remux(ts_path: Path, dest: Path) -> tuple[bool, str]:
             "+faststart",
             str(dest),
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        except subprocess.TimeoutExpired:
+            dest.unlink(missing_ok=True)
+            return False, "remux took too long"
         if result.returncode == 0:
             return True, ""
         detail = safe_error((result.stderr or "").strip().splitlines()[-1] if result.stderr else "ffmpeg failed")
@@ -573,20 +600,24 @@ def _remux(ts_path: Path, dest: Path) -> tuple[bool, str]:
 
 
 def _duration_seconds(path: Path) -> float | None:
-    result = subprocess.run(
-        [
-            "ffprobe",
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "csv=p=0",
-            str(path),
-        ],
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-show_entries",
+                "format=duration",
+                "-of",
+                "csv=p=0",
+                str(path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        return None
     if result.returncode != 0:
         return None
     try:

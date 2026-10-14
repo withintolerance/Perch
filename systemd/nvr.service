@@ -9,6 +9,7 @@ Environment=NVR_CONFIG=/opt/nvr/cameras.yaml
 Environment=TZ=UTC
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/nvr/.venv/bin/python -m app
+LimitNOFILE=65535
 Restart=always
 RestartSec=2
 
